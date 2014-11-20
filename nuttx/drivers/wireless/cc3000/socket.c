@@ -885,7 +885,8 @@ simple_link_recv(long sd, void *buf, long len, long flags, sockaddr *from,
 	{
 		// Wait for the data in a synchronous way. Here we assume that the bug is 
 		// big enough to store also parameters of receive from too....
-		SimpleLinkWaitData((uint8_t *)buf, (uint8_t *)from, (uint8_t *)fromlen);
+		//SimpleLinkWaitData((uint8_t *)buf, (uint8_t *)from, (uint8_t *)fromlen);
+		///printf("Dados recebido = 0x%02X\n", tSocketReadEvent.iNumberOfBytes);
 	}
 	
 	errno = tSocketReadEvent.iNumberOfBytes;

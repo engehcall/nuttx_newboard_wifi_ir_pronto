@@ -78,3 +78,7 @@ void DeassertWlanCS(void);
  */
 void Wlan_Setup(void);
 
+inline void write_sck(bool val);
+inline void write_mosi(bool val);
+inline bool read_miso();
+

@@ -86,6 +86,7 @@
 
 int nsh_archinitialize(void)
 {
+  setup();
   return OK;
 }
 

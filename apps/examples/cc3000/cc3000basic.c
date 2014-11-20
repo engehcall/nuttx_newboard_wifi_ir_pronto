@@ -88,9 +88,13 @@ Arduino pin -----> 560 Ohm --+--> 1K Ohm -----> GND
 
 
 #include "board.h"
+#include "server.h"
+#include <time.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <unistd.h>
+#include <termios.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <sys/time.h>
@@ -122,6 +126,83 @@ void ShowInformation(void);
 
 uint8_t isInitialized = false;
 
+uint8_t gotIPConfig = 0;
+
+char cc3000state = CC3000_UNINIT;
+
+struct timespec diff(struct timespec start, struct timespec end)
+{
+	struct timespec temp;
+	if ((end.tv_nsec-start.tv_nsec)<0) {
+		temp.tv_sec = end.tv_sec-start.tv_sec-1;
+		temp.tv_nsec = 1000000000+end.tv_nsec-start.tv_nsec;
+	} else {
+		temp.tv_sec = end.tv_sec-start.tv_sec;
+		temp.tv_nsec = end.tv_nsec-start.tv_nsec;
+	}
+	return temp;
+}
+
+
+//*****************************************************************************
+//
+//!  \brief  Return the current state bits
+//!
+//!  \param  None
+//!
+//!  \return none
+//!
+//
+//*****************************************************************************
+char currentCC3000State(void)
+{
+    return cc3000state;
+}
+
+void setCC3000MachineState(char stat)
+{
+    char bitmask = stat;
+    cc3000state |= bitmask;
+
+    int i = FIRST_STATE;
+
+    // Find LED number which needs to be set
+    while(bitmask < 0x80)
+    {
+        bitmask  = bitmask << 1;
+        i++;
+    }
+}
+
+//*****************************************************************************
+//
+//!  \brief  Unsets a state from the state machine
+//!  Also handles LEDs
+//!  
+//!  \param  None
+//!
+//!  \return none
+//!  
+//
+//*****************************************************************************
+void unsetCC3000MachineState(char stat)
+{
+    char bitmask = stat;
+    cc3000state &= ~bitmask;
+
+    int i = FIRST_STATE;
+
+    // Set all upper bits to 0 as well since state machine cannot have
+    // those states.
+    while(bitmask < 0x80)
+    {
+        cc3000state &= ~bitmask;
+        bitmask = bitmask << 1;
+        i++;
+    }
+
+}
+
 
 void AsyncEventPrint(void) {
 	switch(lastAsyncEvent) {
@@ -145,6 +226,7 @@ void AsyncEventPrint(void) {
 			printf("%d", dhcpIPAddress[2]);
 			printf(".");
 			printf("%d\n", dhcpIPAddress[3]);
+			gotIPConfig = 1;
 			break;
 
 		case HCI_EVENT_CC3000_CAN_SHUT_DOWN:
@@ -184,11 +266,6 @@ void helpme(void) {
 
 void execute(int cmd)
 {
-	if (asyncNotificationWaiting) {
-		asyncNotificationWaiting = false;
-		AsyncEventPrint();
-	}
-
 	switch(cmd) {
 		case '1':
 			Initialize();
@@ -418,8 +495,8 @@ void StartSmartConfig(void) {
 
 void ManualConnect(void) {
 
-	char ssidName[] = "YourAP";
-	char AP_KEY[] = "yourpass";
+	char ssidName[] = "OpenWrt";
+	char AP_KEY[] = "gargame1";
 	uint8_t rval;
 
 	if (!isInitialized)
@@ -748,14 +825,53 @@ void ShowInformation(void) {
 int c3b_main(int argc, char *argv[])
 {
 	char ch='0';
+	struct timespec ts_start, ts_now;
+
+//	helpme();
+
+	execute('1');
+	execute('7');
+	execute('4');
+	clock_gettime(CLOCK_REALTIME, &ts_start);
 
 	while(ch != 'q' && ch != 'Q')
 	{
-		helpme();
 
-		ch = getchar();
+		/*ch = getchx();
+		if(ch >= '0' && ch <= '9' || ch == 13){
+			execute(ch);
+			helpme();
+		}*/
 
-		execute(ch);
+		if (asyncNotificationWaiting)
+		{
+			clock_gettime(CLOCK_REALTIME, &ts_now);
+			printf("%02d:%02d:%02d.%02d ",
+				diff(ts_start,ts_now).tv_sec/3600,
+				diff(ts_start,ts_now).tv_sec/60,
+				diff(ts_start,ts_now).tv_sec % 60,
+				diff(ts_start,ts_now).tv_nsec/10000000);
+			fflush(stdin);
+			asyncNotificationWaiting = false;
+			AsyncEventPrint();
+		}
+
+		usleep(10000);
+
+		if (gotIPConfig == 1)
+		{
+			// Attempt to start data server
+			printf("Starting Server...\n");
+			initServer();
+			if(currentCC3000State() & CC3000_SERVER_INIT)
+			{
+				waitForConnection();
+			}
+			else
+			{
+				usleep(1000000); //this should wait a second
+			}
+		}
 	}
 
 	return 0;

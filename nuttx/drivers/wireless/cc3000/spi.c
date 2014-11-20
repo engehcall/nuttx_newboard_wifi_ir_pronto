@@ -22,12 +22,16 @@
 #include <debug.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdbool.h>
 #include <nuttx/config.h>
 #include <nuttx/spi/spi.h>
+#include <arch/board/board.h>
 #include <arch/board/kl_wifi.h>
 #include <nuttx/wireless/cc3000/hci.h>
 #include <nuttx/wireless/cc3000/spi.h>
-//#include <nuttx/wireless/cc3000/ArduinoCC3000Core.h>
+
+extern bool kl_gpioread(uint32_t pinset);
+extern void kl_gpiowrite(uint32_t pinset, bool value);
 
 // This flag lets the interrupt handler know if it should respond to
 // the WL_SPI_IRQ pin going low or not
@@ -54,9 +58,11 @@ int16_t SPIInterruptsEnabled=0;
 #define eSPI_STATE_READ_FIRST_PORTION   (7)
 #define eSPI_STATE_READ_EOT             (8)
 
+static uint8_t spiEnabled = 0;
+
 /* !!!HACK!!!*/
 #define KL_PORTA_ISFR 0x400490a0
-#define PIN16 16
+#define PIN4 4
 #define getreg32(a)          (*(volatile uint32_t *)(a))
 #define putreg32(v,a)        (*(volatile uint32_t *)(a) = (v))
 
@@ -138,6 +144,7 @@ uint8_t wlan_tx_buffer[CC3000_TX_BUFFER_SIZE];
 
 struct spi_dev_s *spi = NULL;
 
+#if 0
 unsigned int SPIPump(uint8_t data)
 {
   uint8_t rx;
@@ -157,6 +164,65 @@ unsigned int SPIPump(uint8_t data)
 
   return rx;
 }
+#endif
+
+void enable_debug_spi(uint8_t val)
+{
+	spiEnabled = val;
+}
+
+int8_t SPIPump(int8_t data) {
+
+        int8_t receivedData=0, i;
+
+	/*if (data == 0x14)
+		printf("\ndataOld = %d\n", dataPrev);
+	if (dataPrev == 0x14){
+		printf("\ndataPrev = %d\n", dataPrev);
+		printf("\ndataNew = %d\n ", data);
+	}
+
+	dataPrev=data;*/
+
+	if(spiEnabled)
+	   printf("SPIPump tx = 0x%02X ", (uint8_t) data);
+
+        for (i=7; i>=0; i--)
+	{
+
+                receivedData <<= 1;
+
+                if (data & (1<<i))
+		{
+                        write_mosi(true);
+                }
+                else
+		{
+                        write_mosi(false);
+                }
+
+                write_sck(true);
+                asm volatile("nop");
+                asm volatile("nop");
+
+                write_sck(false);
+
+                if (read_miso())
+		{
+                        receivedData |= 1;
+                }
+
+                asm volatile("nop");
+                asm volatile("nop");
+
+        }
+
+	if(spiEnabled)
+		printf(" rx = 0x%02X\n", (uint8_t) receivedData);
+
+        return(receivedData);
+}
+
 
 //*****************************************************************************
 //
@@ -566,61 +632,58 @@ void SpiReadHeader(void)
 //__interrupt void IntSpiGPIOHandler(void)
 int CC3000InterruptHandler(int irq, void *context)
 {
-  uint32_t regval = 0;
+        uint32_t regval = 0;
 
-  regval = getreg32(KL_PORTA_ISFR);
-  if (regval & (1 << PIN16))
-    {
-      //printf("\nAn interrupt was issued!\n");
-
-      if (!SPIInterruptsEnabled)
+        regval = getreg32(KL_PORTA_ISFR);
+        if (regval & (1 << PIN4))
         {
-          goto out;
-        }
+		if(spiEnabled)
+			printf("Receive an Interrupt!\n");
+		if (!SPIInterruptsEnabled) {
+			if(spiEnabled)
+			   printf("SPIInterrupt was disabled!\n");
+			goto out;
+		}
+		if(spiEnabled)
+		   printf("SPIInterrupt was enabled!\n");
 
-      //printf("\nSPIInterrupt was enabled!\n");
+		if (sSpiInformation.ulSpiState == eSPI_STATE_POWERUP)
+		{
+			/* This means IRQ line was low call a callback of HCI Layer to inform on event */
+	 		sSpiInformation.ulSpiState = eSPI_STATE_INITIALIZED;
+		}
+		else if (sSpiInformation.ulSpiState == eSPI_STATE_IDLE)
+		{			
+			sSpiInformation.ulSpiState = eSPI_STATE_READ_IRQ;
+			
+			/* IRQ line goes down - start reception */
+			AssertWlanCS();
 
-      if (sSpiInformation.ulSpiState == eSPI_STATE_POWERUP)
-        {
-          /* This means IRQ line was low call a callback of HCI Layer to inform on event */
+			//
+			// Wait for TX/RX Complete which will come as DMA interrupt
+			// 
+	       		SpiReadHeader();
 
-          sSpiInformation.ulSpiState = eSPI_STATE_INITIALIZED;
-        }
-      else if (sSpiInformation.ulSpiState == eSPI_STATE_IDLE)
-        {
-          sSpiInformation.ulSpiState = eSPI_STATE_READ_IRQ;
+			sSpiInformation.ulSpiState = eSPI_STATE_READ_EOT;
+			
+			SSIContReadOperation();
+		}
+		else if (sSpiInformation.ulSpiState == eSPI_STATE_WRITE_IRQ)
+		{
+			
+			SpiWriteDataSynchronous(sSpiInformation.pTxPacket, sSpiInformation.usTxPacketLength);
 
-         /* IRQ line goes down - start reception */
+			sSpiInformation.ulSpiState = eSPI_STATE_IDLE;
 
-         AssertWlanCS();
-
-         //
-         // Wait for TX/RX Complete which will come as DMA interrupt
-         //
-
-         SpiReadHeader();
-
-         sSpiInformation.ulSpiState = eSPI_STATE_READ_EOT;
-
-         SSIContReadOperation();
-        }
-      else if (sSpiInformation.ulSpiState == eSPI_STATE_WRITE_IRQ)
-        {
-          SpiWriteDataSynchronous(sSpiInformation.pTxPacket, sSpiInformation.usTxPacketLength);
-
-          sSpiInformation.ulSpiState = eSPI_STATE_IDLE;
-
-          DeassertWlanCS();
-        }
-      else
-        {
-        }
-
+			DeassertWlanCS();
+		}
+		else {
+		}
+		
 out:
-      regval = (1 << PIN16);
-      putreg32(regval, KL_PORTA_ISFR);
-    }
-
+                regval = (1 << PIN4);
+                putreg32(regval, KL_PORTA_ISFR);
+        }
   return 0;
 }
 

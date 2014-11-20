@@ -114,6 +114,21 @@ void DeassertWlanCS(void)
 	kl_gpiowrite(GPIO_WIFI_CS, true);
 }
 
+inline void write_sck(bool val)
+{
+	kl_gpiowrite(WLAN_SCK, val);
+}
+
+inline void write_mosi(bool val)
+{
+	kl_gpiowrite(WLAN_MOSI, val);
+}
+
+inline bool read_miso()
+{
+	return kl_gpioread(WLAN_MISO);
+}
+
 /****************************************************************************
  * Name: Wlan_Setup
  *
@@ -138,6 +153,11 @@ void Wlan_Setup(void)
   /* Configure PIN used as SPI CS */
   kl_configgpio(GPIO_WIFI_CS);
 
+  /* Configure SPI pins as GPIO*/
+  kl_configgpio(WLAN_SCK);
+  kl_configgpio(WLAN_MISO);
+  kl_configgpio(WLAN_MOSI);
+
   /* Make sure the chip is OFF before we start */
   WriteWlanEnablePin(false);
 
@@ -145,9 +165,9 @@ void Wlan_Setup(void)
   DeassertWlanCS();
 
   /* Configure pin to detect interrupt on falling edge */
-  regval = getreg32(KL_PORTA_PCR16);
+  regval = getreg32(KL_PORTA_PCR4);
   regval |= PORT_PCR_IRQC_FALLING;
-  putreg32(regval, KL_PORTA_PCR16);
+  putreg32(regval, KL_PORTA_PCR4);
 
   ret = irq_attach(KL_IRQ_PORTA, CC3000InterruptHandler);
   if (ret == OK)
